@@ -1,0 +1,264 @@
+// design file
+module dual_port_RAM(enb,clk,rst,rd,wr,rd_add,wr_add,rd_data,wr_data);
+  input clk,rst,rd,wr,enb;
+  input [7:0]wr_data;
+  input [4:0]wr_add,rd_add;
+  output reg rd_data;
+  int i;
+  reg [15:0]mem;
+  always@(posedge clk)
+    begin
+      if(rst)
+        begin
+          if(enb)
+            begin
+              if(wr==1&&rd==0)
+                begin
+                  mem[wr_add]<=wr_data;
+                end
+              else if(wr==0&&rd==1)
+                begin
+                  rd_data<=mem[rd_add];
+                end
+              else if(wr==1&&rd==1)
+                begin
+                  mem[wr_add]<=wr_data;
+                  rd_data<=mem[rd_add];
+                end
+              else
+                begin
+                  for(i=0;i<=15;i++)
+                    begin
+                      mem[i]<=mem[i];
+                    end
+                end
+            end
+        end
+      else
+        begin
+          for(i=0;i<=15;i++)
+            begin
+              mem[i]<=8'bx;
+            end
+        end
+    end
+endmodule
+
+//packet
+class packet;
+  rand bit[7:0]wr_data;
+   bit[7:0]rd_data;
+  rand bit[4:0]rd_add,wr_add;
+  logic enb=1,wr,rd;
+  function void current(string name);
+    $display("xxxxxxxxxx");
+    $display("%s",name);
+    $display("xxxxxxxxxx");
+  endfunction
+endclass
+
+//generator
+class generator;
+  packet px;
+  mailbox g2d;
+  
+  function new(mailbox g2d);
+    this.g2d=g2d;
+  endfunction
+  
+  task write();
+    repeat(1)
+      begin 
+        px.current("generator writing");
+        px=new();
+        px.randomize();
+        px.rd=0;
+        px.wr=1;
+        
+        g2d.put(px);
+      end
+  endtask
+  task read();
+    repeat(1)
+      begin 
+        px.current("generator reading");
+        px=new();
+        px.randomize();
+        px.rd=1;
+        px.wr=0;
+       
+        g2d.put(px);
+      end
+  endtask
+  task write_read();
+    repeat(1)
+      begin 
+        px.current("generator writing-reading");
+        px=new();
+        px.randomize();
+        px.rd=1;
+        px.wr=1;
+         
+        g2d.put(px);
+      end
+  endtask
+  
+endclass
+
+//driver
+class driver;
+  mailbox g2d;
+  virtual intf vif;
+  packet px;
+  function new(virtual intf vif,mailbox g2d);
+    this.vif=vif;
+    this.g2d=g2d;
+  endfunction
+  task run();
+    repeat(1)
+      begin 
+        g2d.get(px);
+        px.current("driver");
+        vif.rd<=px.rd;
+        vif.wr<=px.wr;
+        vif.wr_data[7:0]<=px.wr_data[7:0];
+        vif.enb<=px.enb;
+        vif.rd_add[4:0]<=px.rd_add[4:0];
+        vif.wr_add[4:0]<=px.wr_add[4:0];
+        
+      end
+  endtask
+endclass
+
+//interface
+interface intf(input clk,rst);
+  logic wr,rd,enb=1;
+  logic [7:0]wr_data,rd_data;
+  logic [4:0]rd_add,wr_add;
+endinterface
+
+//monitor
+class monitor;
+  mailbox m2s;
+  virtual intf vif;
+  packet px;
+  function new(mailbox m2s,virtual intf vif);
+    this.m2s=m2s;
+    this.vif=vif;
+  endfunction
+  task run();
+    repeat(1)
+      begin 
+      px=new();
+    px.enb=vif.enb;
+        px.rd_data[7:0]=vif.rd_data[7:0];
+        px.wr_data[7:0]=vif.wr_data[7:0];
+        px.rd_add[4:0]=vif.rd_add[4:0];
+        px.wr_add[4:0]=vif.wr_add[4:0];
+    px.rd=vif.rd;
+    px.wr=vif.wr;
+    px.current("monitor");
+    m2s.put(px);
+      end
+  endtask
+endclass
+
+//scoreboard
+class scoreboard;
+  mailbox m2s;
+  packet px,px_compare;
+  function new(mailbox m2s);
+    this.m2s=m2s;
+  endfunction
+  task run();
+    repeat(1);
+    begin
+      m2s.get(px);
+      px_compare=new();
+      px_compare.enb=px.enb;
+      px_compare.rd=px.rd;
+      px_compare.wr=px.wr;
+      px_compare.rd_add=px.rd_add;
+      px_compare.wr_add=px.wr_add;
+      px_compare.wr_data=px.wr_data;
+      if(px_compare.rd_data== px.rd_data)
+        begin
+        $display("correct");
+        end
+      else
+        begin
+          $display("incorrect");
+        end
+      px.current("scoreboard");
+    end
+  endtask
+endclass
+
+//environment
+`include "packet"
+`include "generator"
+`include "driver"
+`include "monitor"
+`include "scoreboard"
+class environment;
+  virtual intf vif;
+  generator gen;
+  driver dri;
+  monitor m;
+  scoreboard score;
+  mailbox g2d=new();
+  mailbox m2s=new();
+  function new(virtual intf vif);
+    this.vif=vif;
+    gen=new(g2d);
+    dri=new(vif, g2d);
+    m=new(m2s,vif);
+    score=new(m2s);
+  endfunction
+  task run();
+    repeat(1)
+      begin 
+        fork
+          gen.read();
+          dri.run();
+          m.run();
+          score.run();
+        join
+        #50
+        fork
+          gen.write();
+          dri.run();
+          m.run();
+          score.run();
+        join
+        #60
+        fork
+          gen.write_read();
+          dri.run();
+          m.run();
+          score.run();
+        join
+      end
+  endtask
+endclass
+
+//testbench
+`include "environment"
+`include "interface"
+module top;
+  environment env;
+  bit clk,rst;
+  intf aintf(clk,rst);
+  dual_port_RAM dut(.enb(aintf.enb),.rd(aintf.rd),.wr(aintf.wr),.rd_data(aintf.rd_data),.wr_data(aintf.wr_data),.wr_add(aintf.wr_add),.rd_add(aintf.rd_add),.clk(aintf.clk),.rst(aintf.rst));
+  initial
+    begin 
+      env=new(aintf);
+      env.run();
+    end
+  initial
+    begin 
+      $dumpfile("dump.vcd");
+      $dumpvars;
+    end
+endmodule
+
