@@ -1,0 +1,166 @@
+//design file
+module half_adder(a,b,c,d);
+  input a,b;
+  output c,d;
+  assign c=a^b;
+  assign d=a&b;
+endmodule
+
+//packet
+class packet;
+  rand bit a;
+  rand bit b;
+  bit c,d;
+  
+  function void current(string name);
+    $display("xxxxxxxxxx");
+    $display("%s",name);
+    $display("%d,%d",a,b);
+    $display("%d,%d",c,d);
+    $display("xxxxxxxxxx");
+  endfunction
+endclass
+
+//generator
+class generator;
+  packet px;
+  mailbox g2d;
+  function new(mailbox g2d);
+    this.g2d=g2d;
+  endfunction
+  
+  task run();
+    repeat(1)
+      begin 
+        px=new();
+        px.randomize();
+        px.current("generator");
+        g2d.put(px);
+      end
+  endtask
+endclass
+
+//driver
+class driver;
+  mailbox g2d;
+  virtual intf vif;
+  packet px;
+  function new(virtual intf vif,mailbox g2d);
+    this.vif=vif;
+    this.g2d=g2d;
+  endfunction
+  task run();
+    repeat(1)
+      begin 
+        g2d.get(px);
+        px.current("driver");
+        vif.a<=px.a;
+        vif.b<=px.b;
+      end
+  endtask
+endclass
+
+//interface
+interface intf;
+  logic a,b,c,d;
+endinterface
+
+//monitor
+class monitor;
+  mailbox m2s;
+  virtual intf vif;
+  packet px;
+  function new(mailbox m2s,virtual intf vif);
+    this.m2s=m2s;
+    this.vif=vif;
+  endfunction
+  task run();
+    repeat(1)
+      begin 
+      px=new();
+    px.a=vif.a;
+    px.b=vif.b;
+    px.c=vif.c;
+    px.d=vif.d;
+    px.current("monitor");
+    m2s.put(px);
+      end
+  endtask
+endclass
+
+//scoeboard
+class scoreboard;
+  mailbox m2s;
+  packet px;
+  function new(mailbox m2s);
+    this.m2s=m2s;
+  endfunction
+  task run();
+    repeat(1);
+    begin
+      m2s.get(px);
+      if((px.c==(px.a ^ px.b))&&(px.d==(px.a & px.b)))
+        begin
+        $display("correct");
+        end
+      else
+        begin
+          $display("incorrect");
+        end
+      px.current("scoreboard");
+    end
+  endtask
+endclass
+
+//environment
+`include "packet"
+`include "generator"
+`include "driver"
+`include "monitor"
+`include "scoreboard"
+class environment;
+  virtual intf vif;
+  generator gen;
+  driver dri;
+  monitor m;
+  scoreboard score;
+  mailbox g2d=new();
+  mailbox m2s=new();
+  function new(virtual intf vif);
+    this.vif=vif;
+    gen=new(g2d);
+    dri=new(vif, g2d);
+    m=new(m2s,vif);
+    score=new(m2s);
+  endfunction
+  task run();
+    repeat(1)
+      begin 
+        fork
+          gen.run();
+          dri.run();
+          m.run();
+          score.run();
+        join
+      end
+  endtask
+endclass
+
+//testbench
+`include "environment"
+`include "interface"
+module top;
+  environment env;
+  intf aintf();
+  half_adder dut(.a(aintf.a),.b(aintf.b),.c(aintf.c),.d(aintf.d));
+  initial
+    begin 
+      env=new(aintf);
+      env.run();
+    end
+  initial
+    begin 
+      $dumpfile("dump.vcd");
+      $dumpvars;
+    end
+endmodule
