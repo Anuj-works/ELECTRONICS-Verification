@@ -1,0 +1,287 @@
+//main testbench
+`include "uvm_macros.svh" 
+import uvm_pkg::*; 
+
+`include "interface.sv"
+`include "sequence_item.sv"
+`include "sequence.sv"
+`include "sequencer.sv"
+`include "driver.sv"
+`include "monitor.sv"
+`include "agent.sv"
+`include "scoreboard.sv"
+`include "environment.sv"
+`include "test.sv"
+
+module testbench;
+  logic clk;
+  d_ff dut(.clk(vintf.clk),.rst(vintf.rst),.d(vintf.d),.o(vintf.o));
+  intf vintf(.clk(clk));
+  
+  initial begin 
+    uvm_config_db#(virtual intf)::set(null,"*","vif",vintf);
+  end
+  
+  initial
+    begin 
+      clk = 0;
+    end
+    always #10 clk = ~clk;
+    
+   
+  initial
+    begin
+      $monitor($time, "clk = %d", clk);
+    
+    #500 $finish;
+  end
+  
+  initial begin 
+    run_test("test_d");
+  end
+  endmodule
+    
+  // driver
+class driver_d extends uvm_driver#(sequence_items_d);
+  `uvm_component_utils(driver_d)
+  virtual intf vintf;
+  sequence_items_d tx;
+  
+  function new(string name = "driver_d", uvm_component parent);
+    super.new(name, parent);
+   `uvm_info("driver Class", "constructor", UVM_MEDIUM)
+  endfunction
+               
+  function void build_phase(uvm_phase phase);
+ super.build_phase(phase);
+    if(!uvm_config_db#(virtual intf)::get(this, "", "vif", vintf))
+      `uvm_fatal("no_inif in driver","virtual interface get failed from config db");
+      tx = sequence_items_d::type_id::create("tx");
+endfunction  
+  
+  task run_phase(uvm_phase phase);
+    forever begin
+      `uvm_info("driver Class", "run_phase", UVM_MEDIUM)
+
+      seq_item_port.get_next_item(tx);
+      @(posedge vintf.clk)
+    vintf.rst <= tx.rst;
+    vintf.d <= tx.d;
+    vintf.o <= tx.o;
+      seq_item_port.item_done();
+    end
+  endtask
+  
+ //interface
+  interface intf(input logic clk);
+ logic rst;
+  logic d;
+  logic o;
+ endinterface
+
+  //test
+  class test_d extends uvm_test;
+  `uvm_component_utils(test_d)
+  env_d env;
+  sequence_d se_q;
+  
+  function new(string name = "test_d", uvm_component parent);
+    super.new(name, parent);
+    `uvm_info("Test Class", "constructor", UVM_MEDIUM)
+  endfunction
+               
+ function void build_phase(uvm_phase phase);
+ super.build_phase(phase);
+ env = env_d::type_id::create("env", this);
+   se_q = sequence_d::type_id::create("se_q", this);
+endfunction
+  
+  virtual function void end_of_elaboration();
+    `uvm_info("Test Class", "elob phase", UVM_MEDIUM)
+    print();
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    `uvm_info("test Class", "run_phase", UVM_MEDIUM)
+
+    phase.raise_objection(this); 
+    se_q.start(env.agn.seq); 
+    phase.drop_objection(this);
+    
+  endtask 
+endclass
+
+  //environment
+  class env_d extends uvm_env;
+  `uvm_component_utils(env_d)
+  scoreboard_d scb;
+  agent_d agn;
+  
+  function new(string name = "env_d", uvm_component parent);
+    super.new(name, parent);
+   `uvm_info("environment Class", "constructor", UVM_MEDIUM)
+  endfunction
+               
+ function void build_phase(uvm_phase phase);
+ super.build_phase(phase);
+    scb = scoreboard_d::type_id::create("scb", this);
+    agn = agent_d::type_id::create("agn", this);
+endfunction  
+               
+ function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+   `uvm_info("environment Class", "connect phase", UVM_MEDIUM)
+   agn.mon.item_collected_port.connect(scb.item_collected_export);
+endfunction              
+endclass
+  
+  // sequencer
+  class sequencer_d extends uvm_sequencer#(sequence_items_d);
+  `uvm_component_utils(sequencer_d)
+  
+  function new(string name = "sequencer_d", uvm_component parent);
+    super.new(name, parent);
+    `uvm_info("sequencer Class", "constructor", UVM_MEDIUM)
+  endfunction
+endclass
+  
+  // sequence items
+  class sequence_items_d extends uvm_sequence_item;
+  `uvm_object_utils(sequence_items_d)
+  
+  rand logic rst,d;
+  logic o;
+  
+  function new(string name = "sequence_items_d");
+    super.new(name);
+  `uvm_info("sequence items object", "constructor", UVM_MEDIUM)
+  endfunction
+endclass
+  
+  // monitor
+  class monitor_d extends uvm_monitor;
+  `uvm_component_utils(monitor_d)
+  
+  virtual intf vintf;
+  uvm_analysis_port #(sequence_items_d) item_collected_port;
+  sequence_items_d tx;
+  
+  function new(string name = "monitor_d", uvm_component parent);
+    super.new(name, parent);
+     `uvm_info("monitor Class", "constructor", UVM_MEDIUM)
+  endfunction
+               
+ function void build_phase(uvm_phase phase);
+ super.build_phase(phase);
+ item_collected_port = new("item_collected_port", this);
+
+   if(!uvm_config_db#(virtual intf)::get(this, "", "vif", vintf))
+      `uvm_fatal("no_inif in driver","virtual interface get failed from config db");
+  
+      
+endfunction   
+  
+  task run_phase(uvm_phase phase);
+     tx = sequence_items_d::type_id::create("tx");
+    wait(!vintf.rst)
+    
+   
+    @(posedge vintf.clk)
+    tx.rst = vintf.rst;
+    tx.d = vintf.d;
+    tx.o = vintf.o;
+  endtask
+endclass
+  
+  // scoreboard
+  class scoreboard_d extends uvm_scoreboard;
+  `uvm_component_utils(scoreboard_d)
+  
+  uvm_analysis_imp#(sequence_items_d, scoreboard_d) item_collected_export;
+
+  sequence_items_d tx_q[$];
+  
+  function new(string name = "scoreboard_d", uvm_component parent);
+    super.new(name, parent);
+   `uvm_info("scoreboard Class", "constructor", UVM_MEDIUM)
+  endfunction
+               
+ function void build_phase(uvm_phase phase);
+ super.build_phase(phase);
+ item_collected_export = new("item_collected_export", this);
+endfunction 
+  
+  virtual function void write(sequence_items_d tx);
+    
+    tx_q.push_back(tx);
+  endfunction
+endclass
+
+  //agent
+  class agent_d extends uvm_agent;
+  `uvm_component_utils(agent_d)
+  monitor_d mon;
+  driver_d dri;
+  sequencer_d seq;
+  
+  function new(string name =" agent_d", uvm_component parent);
+    super.new(name, parent);
+      `uvm_info("agent Class", "constructor", UVM_MEDIUM)
+  endfunction
+               
+  function void build_phase(uvm_phase phase);
+ super.build_phase(phase);
+    mon = monitor_d::type_id::create("mon", this);
+    dri = driver_d::type_id::create("dri", this);
+    seq = sequencer_d::type_id::create("seq", this);
+endfunction     
+               
+ function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+    `uvm_info("agent Class", "connect phase", UVM_MEDIUM)
+   dri.seq_item_port.connect(seq.seq_item_export);
+endfunction              
+endclass
+
+  //sequence
+  class sequence_d extends uvm_sequence;
+  `uvm_object_utils(sequence_d)
+  
+   sequence_items_d tx;
+  
+  function new(string name = "sequence_d");
+    super.new(name);
+  `uvm_info("sequence object", "constructor", UVM_MEDIUM)
+  endfunction
+  
+  task body();
+    repeat(5) begin
+      
+      tx = sequence_items_d::type_id::create("tx");
+    
+    wait_for_grant();
+    tx.randomize();
+    send_request(tx);
+    wait_for_item_done();
+    
+    end
+  endtask
+    
+endclass
+
+
+  //main design
+  //d-ff design using procedural statement
+module d_ff (clk,rst,d,o);
+    input clk,rst,d;
+    output bit o;
+  always @(posedge clk)
+    begin
+      if(rst) 
+        o<=0;
+      else
+        o <= d;
+    end
+      
+  
+endmodule
