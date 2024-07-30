@@ -1,0 +1,279 @@
+//JK-ff design using procedural statement
+module jk_ff (clk,rst,J,K,o);
+    input clk,rst,J,K;
+    output bit o;
+  always @(posedge clk)
+    begin
+      if(rst==1) 
+        o<=0;
+      else
+        begin 
+          case({J,K})
+              2'b00: o<=o;
+              2'b01: o<=1'b0;
+              2'b10: o<=1'b1;
+              2'b11: o<=!o;
+              endcase
+        end
+    end
+      
+  
+endmodule
+
+//main testbench
+`include "uvm_macros.svh" 
+import uvm_pkg::*; 
+
+`include "interface.sv"
+`include "sequence_item.sv"
+`include "sequence.sv"
+`include "sequencer.sv"
+`include "driver.sv"
+`include "monitor.sv"
+`include "agent.sv"
+`include "scoreboard.sv"
+`include "environment.sv"
+`include "test.sv"
+
+module testbench;
+  logic clk;
+  jk_ff dut(.clk(vintf.clk),.rst(vintf.rst),.J(vintf.J),.K(vintf.K),.o(vintf.o));
+  intf vintf(.clk(clk));
+  
+  initial begin 
+    uvm_config_db#(virtual intf)::set(null,"*","vif",vintf);
+  end
+  
+  initial
+    begin 
+      clk = 1;
+    end
+    always #50 clk = ~clk;
+    
+   
+  initial
+    begin
+      $monitor($time, "clk = %d", clk);
+      $dumpfile("dump.vcd");
+      $dumpvars;
+
+    #5000 $finish;
+  end
+  
+  initial begin 
+    run_test("test_jk");
+  end
+  endmodule
+    
+ 
+//driver
+class driver_jk extends uvm_driver#(sequence_items_jk);
+  `uvm_component_utils(driver_jk)
+  virtual intf vintf;
+  sequence_items_jk tx;
+  
+  function new(string name = "driver_jk", uvm_component parent);
+    super.new(name, parent);
+   `uvm_info("driver Class", "constructor", UVM_MEDIUM)
+  endfunction
+               
+  function void build_phase(uvm_phase phase);
+ super.build_phase(phase);
+    if(!uvm_config_db#(virtual intf)::get(this, "", "vif", vintf))
+      `uvm_fatal("no_inif in driver","virtual interface get failed from config db");
+      tx = sequence_items_jk::type_id::create("tx");
+endfunction  
+  
+  task run_phase(uvm_phase phase);
+    forever begin
+      `uvm_info("driver Class", "run_phase", UVM_MEDIUM)
+
+      seq_item_port.get_next_item(tx);
+      @(posedge vintf.clk)
+    vintf.rst <= tx.rst;
+    vintf.J <= tx.J;
+       vintf.K<= tx.K;
+    vintf.o <= tx.o;
+      seq_item_port.item_done();
+    end
+  endtask
+  
+ 
+ 
+             
+               
+endclass
+
+
+//monitor
+class monitor_jk extends uvm_monitor;
+  `uvm_component_utils(monitor_jk)
+  
+  virtual intf vintf;
+  uvm_analysis_port #(sequence_items_jk) item_collected_port;
+  sequence_items_jk tx;
+  
+  function new(string name = "monitor_t", uvm_component parent);
+    super.new(name, parent);
+     `uvm_info("monitor Class", "constructor", UVM_MEDIUM)
+  endfunction
+               
+ function void build_phase(uvm_phase phase);
+ super.build_phase(phase);
+ item_collected_port = new("item_collected_port", this);
+
+   if(!uvm_config_db#(virtual intf)::get(this, "", "vif", vintf))
+      `uvm_fatal("no_inif in driver","virtual interface get failed from config db");
+  
+      
+endfunction   
+  
+  task run_phase(uvm_phase phase);
+     tx = sequence_items_jk::type_id::create("tx");
+    wait(!vintf.rst)
+    
+   
+    @(posedge vintf.clk)
+    tx.rst = vintf.rst;
+    tx.J = vintf.J;
+     tx.K = vintf.K;
+    tx.o = vintf.o;
+  endtask
+endclass
+
+
+//scoreboard
+class scoreboard_jk extends uvm_scoreboard;
+  `uvm_component_utils(scoreboard_jk)
+  
+  uvm_analysis_imp#(sequence_items_jk, scoreboard_jk) item_collected_export;
+
+  sequence_items_jk tx_q[$];
+  
+  function new(string name = "scoreboard_jk", uvm_component parent);
+    super.new(name, parent);
+   `uvm_info("scoreboard Class", "constructor", UVM_MEDIUM)
+  endfunction
+               
+ function void build_phase(uvm_phase phase);
+ super.build_phase(phase);
+ item_collected_export = new("item_collected_export", this);
+endfunction 
+  
+  virtual function void write(sequence_items_jk tx);
+    
+    tx_q.push_back(tx);
+  endfunction
+endclass
+
+
+//agent
+class agent_jk extends uvm_agent;
+  `uvm_component_utils(agent_jk)
+  monitor_jk mon;
+  driver_jk dri;
+  sequencer_jk seq;
+  
+  function new(string name =" agent_jk", uvm_component parent);
+    super.new(name, parent);
+      `uvm_info("agent Class", "constructor", UVM_MEDIUM)
+  endfunction
+               
+  function void build_phase(uvm_phase phase);
+ super.build_phase(phase);
+    mon = monitor_jk::type_id::create("mon", this);
+    dri = driver_jk::type_id::create("dri", this);
+    seq = sequencer_jk::type_id::create("seq", this);
+endfunction     
+               
+ function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+    `uvm_info("agent Class", "connect phase", UVM_MEDIUM)
+   dri.seq_item_port.connect(seq.seq_item_export);
+endfunction              
+endclass
+
+
+//sequence
+class sequence_jk extends uvm_sequence;
+  `uvm_object_utils(sequence_jk)
+  
+   sequence_items_jk tx;
+  
+  function new(string name = "sequence_jk");
+    super.new(name);
+  `uvm_info("sequence object", "constructor", UVM_MEDIUM)
+  endfunction
+  
+  task body();
+    repeat(5) begin
+      
+      tx = sequence_items_jk::type_id::create("tx");
+    
+    wait_for_grant();
+    tx.randomize();
+    send_request(tx);
+    wait_for_item_done();
+    
+    end
+  endtask
+    
+endclass
+
+
+//sequencer
+class sequencer_jk extends uvm_sequencer#(sequence_items_jk);
+  `uvm_component_utils(sequencer_jk)
+  
+  function new(string name = "sequencer_jk", uvm_component parent);
+    super.new(name, parent);
+    `uvm_info("sequencer Class", "constructor", UVM_MEDIUM)
+  endfunction
+endclass
+
+
+//sequence_items
+class sequence_items_jk extends uvm_sequence_item;
+  `uvm_object_utils(sequence_items_jk)
+  
+  rand logic rst,J,K;
+  logic o;
+  
+  function new(string name = "sequence_items_jk");
+    super.new(name);
+  `uvm_info("sequence items object", "constructor", UVM_MEDIUM)
+  endfunction
+endclass
+
+
+//interface
+interface intf(input logic clk);
+ logic rst;
+  logic J;
+  logic K;
+  logic o;
+ endinterface
+  
+//environment
+class env_jk extends uvm_env;
+  `uvm_component_utils(env_jk)
+  scoreboard_jk scb;
+  agent_jk agn;
+  
+  function new(string name = "env_jk", uvm_component parent);
+    super.new(name, parent);
+   `uvm_info("environment Class", "constructor", UVM_MEDIUM)
+  endfunction
+               
+ function void build_phase(uvm_phase phase);
+ super.build_phase(phase);
+    scb = scoreboard_jk::type_id::create("scb", this);
+    agn = agent_jk::type_id::create("agn", this);
+endfunction  
+               
+ function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+   `uvm_info("environment Class", "connect phase", UVM_MEDIUM)
+   agn.mon.item_collected_port.connect(scb.item_collected_export);
+endfunction              
+endclass
